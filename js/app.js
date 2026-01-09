@@ -49,10 +49,25 @@ const DEFAULT_VOCABULARY = {
     environment: ['dēng 灯', 'qiáng 墙', 'mén 门', 'chuāng 窗', 'lù 路', 'shù 树']
 };
 
-// ==================== API 配置 ====================
-const API_CONFIG = {
-    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
-    model: 'google/gemini-2.0-flash-exp:image-generation' // 支持图片生成的模型
+// ==================== API 平台配置 ====================
+const API_PLATFORMS = {
+    openrouter: {
+        name: 'OpenRouter',
+        apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+        model: 'google/gemini-2.5-flash-image-preview',
+        keyUrl: 'https://openrouter.ai/keys',
+        storageKey: 'openrouter_api_key',
+        asyncMode: false  // 同步返回
+    },
+    kie: {
+        name: 'Nano Banana Pro',
+        createTaskUrl: 'https://api.kie.ai/api/v1/jobs/createTask',
+        queryTaskUrl: 'https://api.kie.ai/api/v1/jobs/recordInfo',
+        model: 'nano-banana-pro',
+        keyUrl: 'https://kie.ai/api-key',
+        storageKey: 'kie_api_key',
+        asyncMode: true  // 异步需要轮询
+    }
 };
 
 // ==================== DOM 元素 ====================
@@ -67,7 +82,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initElements() {
     elements = {
+        platform: document.getElementById('platform'),
         apiKey: document.getElementById('apiKey'),
+        apiKeyHint: document.getElementById('apiKeyHint'),
         toggleApiKey: document.getElementById('toggleApiKey'),
         theme: document.getElementById('theme'),
         customTheme: document.getElementById('customTheme'),
@@ -86,6 +103,12 @@ function initElements() {
 }
 
 function initEventListeners() {
+    // 平台切换
+    elements.platform.addEventListener('change', () => {
+        updatePlatformUI();
+        loadSavedApiKey();
+    });
+
     // API Key 显示/隐藏
     elements.toggleApiKey.addEventListener('click', () => {
         if (elements.apiKey.type === 'password') {
@@ -99,9 +122,10 @@ function initEventListeners() {
 
     // API Key 保存
     elements.apiKey.addEventListener('change', () => {
+        const platform = elements.platform.value;
         const apiKey = elements.apiKey.value.trim();
         if (apiKey) {
-            localStorage.setItem('openrouter_api_key', apiKey);
+            localStorage.setItem(API_PLATFORMS[platform].storageKey, apiKey);
         }
     });
 
@@ -134,15 +158,28 @@ function initEventListeners() {
     elements.downloadBtn.addEventListener('click', handleDownload);
 }
 
+// 更新平台相关 UI
+function updatePlatformUI() {
+    const platform = elements.platform.value;
+    const config = API_PLATFORMS[platform];
+    elements.apiKeyHint.innerHTML = `💡 获取 API Key: <a href="${config.keyUrl}" target="_blank">${config.keyUrl}</a>`;
+}
+
 function loadSavedApiKey() {
-    const savedKey = localStorage.getItem('openrouter_api_key');
+    const platform = elements.platform.value;
+    const config = API_PLATFORMS[platform];
+    const savedKey = localStorage.getItem(config.storageKey);
     if (savedKey) {
         elements.apiKey.value = savedKey;
+    } else {
+        elements.apiKey.value = '';
     }
+    updatePlatformUI();
 }
 
 // ==================== 生成处理 ====================
 async function handleGenerate() {
+    const platform = elements.platform.value;
     const apiKey = elements.apiKey.value.trim();
     const theme = elements.theme.value === 'custom' ? elements.customTheme.value.trim() : elements.theme.value;
     const title = elements.title.value.trim();
@@ -170,8 +207,8 @@ async function handleGenerate() {
         // 生成提示词
         const prompt = generatePrompt(theme, title);
 
-        // 调用 OpenRouter API 生成图片
-        const imageUrl = await generateImage(apiKey, prompt);
+        // 根据平台调用不同的 API
+        const imageUrl = await generateImage(platform, apiKey, prompt, imageRatio);
 
         // 显示结果
         showResult(imageUrl);
@@ -239,17 +276,30 @@ ${vocab.environment.map(item => `* ${item}`).join('\n')}
 }
 
 // ==================== API 调用 ====================
-async function generateImage(apiKey, prompt) {
-    const response = await fetch(API_CONFIG.apiUrl, {
+async function generateImage(platform, apiKey, prompt, imageRatio) {
+    const config = API_PLATFORMS[platform];
+
+    if (platform === 'openrouter') {
+        return await generateImageOpenRouter(config, apiKey, prompt);
+    } else if (platform === 'kie') {
+        return await generateImageKie(config, apiKey, prompt, imageRatio);
+    }
+
+    throw new Error('不支持的平台');
+}
+
+// OpenRouter 图片生成
+async function generateImageOpenRouter(config, apiKey, prompt) {
+    const response = await fetch(config.apiUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
             'HTTP-Referer': window.location.href,
-            'X-Title': '儿童识字小报生成器'
+            'X-Title': 'Child Literacy Poster Generator'
         },
         body: JSON.stringify({
-            model: API_CONFIG.model,
+            model: config.model,
             messages: [
                 {
                     role: 'user',
@@ -275,18 +325,15 @@ async function generateImage(apiKey, prompt) {
     // 检查是否有生成的图片
     if (message.images && message.images.length > 0) {
         const imageData = message.images[0].image_url;
-        // OpenRouter 返回的是 base64 数据 URL
         if (imageData.url.startsWith('data:image')) {
             return imageData.url;
         }
-        // 如果是普通 URL
         return imageData.url;
     }
 
     // 如果没有图片，检查 content 中是否有图片 URL
     if (message.content) {
         const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-        // 尝试从内容中提取图片 URL
         const urlMatch = content.match(/https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|webp)/i);
         if (urlMatch) {
             return urlMatch[0];
@@ -294,6 +341,78 @@ async function generateImage(apiKey, prompt) {
     }
 
     throw new Error('生成成功，但未获取到图片数据');
+}
+
+// Kie.ai (Nano Banana Pro) 图片生成
+async function generateImageKie(config, apiKey, prompt, imageRatio) {
+    // 1. 创建任务
+    const createResponse = await fetch(config.createTaskUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+            model: config.model,
+            input: {
+                prompt: prompt,
+                aspect_ratio: imageRatio,
+                resolution: '2K',
+                output_format: 'png'
+            }
+        })
+    });
+
+    const createData = await createResponse.json();
+
+    if (createData.code !== 200) {
+        throw new Error(`创建任务失败: ${createData.msg || '未知错误'}`);
+    }
+
+    const taskId = createData.data.taskId;
+
+    // 2. 轮询查询任务状态
+    return await pollKieTaskStatus(config, apiKey, taskId);
+}
+
+// 轮询 Kie.ai 任务状态
+async function pollKieTaskStatus(config, apiKey, taskId) {
+    const maxAttempts = 60; // 最多轮询 60 次（约 2 分钟）
+    const interval = 2000; // 每 2 秒轮询一次
+
+    for (let i = 0; i < maxAttempts; i++) {
+        const response = await fetch(`${config.queryTaskUrl}?taskId=${taskId}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.code !== 200) {
+            throw new Error(`查询任务失败: ${data.msg || '未知错误'}`);
+        }
+
+        const taskData = data.data;
+
+        if (taskData.state === 'success') {
+            const resultJson = JSON.parse(taskData.resultJson);
+            if (resultJson.resultUrls && resultJson.resultUrls.length > 0) {
+                return resultJson.resultUrls[0];
+            }
+            throw new Error('生成成功，但未获取到图片 URL');
+        }
+
+        if (taskData.state === 'fail') {
+            throw new Error(`生成失败: ${taskData.failMsg || '未知错误'}`);
+        }
+
+        // 继续等待
+        await new Promise(resolve => setTimeout(resolve, interval));
+    }
+
+    throw new Error('生成超时，请稍后重试');
 }
 
 // ==================== UI 控制 ====================

@@ -18,11 +18,18 @@
             <section class="card api-key-section">
                 <h2>🔑 API 设置</h2>
                 <div class="input-group">
+                    <label for="platform">API 平台</label>
+                    <select id="platform">
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="kie">Nano Banana Pro (Kie.ai)</option>
+                    </select>
+                </div>
+                <div class="input-group">
                     <label for="apiKey">API Key</label>
-                    <input type="password" id="apiKey" placeholder="请输入 OpenRouter API Key">
+                    <input type="password" id="apiKey" placeholder="请输入 API Key">
                     <button class="btn-small" id="toggleApiKey">显示</button>
                 </div>
-                <p class="hint">💡 获取 API Key: <a href="https://openrouter.ai/keys" target="_blank">https://openrouter.ai/keys</a></p>
+                <p class="hint" id="apiKeyHint">💡 获取 API Key: <a href="https://openrouter.ai/keys" target="_blank">https://openrouter.ai/keys</a></p>
             </section>
 
             <!-- 参数输入区 -->
